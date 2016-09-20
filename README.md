@@ -23,11 +23,6 @@ The main advantage of this system is a bot command-module, which allows you to c
     ``` sh
     $ php ./launcher.php
     ```
-    or
-    ``` sh
-    $ chmod +x ./launcher.php
-    $ ./launcher.php
-    ```
     
 ### How to write the command
 Detailed description of the item can be found in the file ```example.php```.

@@ -1,7 +1,7 @@
 <?php
 
 /*
- *      AutoBot V0.6
+ *      AutoBot V0.7
  *      PHP Bot for Vk
  *      By Nikita Bykov
  *
@@ -10,9 +10,12 @@
 class Bot
 {
     const TITLE = 'AutoBot';
-    const DESCRIPTION = 'PHP Bot for Vk';
+    const DESCRIPTION = 'PHP Bot for VK';
     const AUTHOR = 'Nikita Bykov';
-    const VERSION = '0.6';
+    const VERSION = '0.7';
+
+    const SLEEP = 1;
+    const C_SEPARATOR = '#';
 
     private static $AntiCaptcha_class_file = __DIR__ . '/AntiCaptcha.class.php';
     private static $VK_class_file = __DIR__ . '/VK.class.php';
@@ -20,10 +23,10 @@ class Bot
     private static $log_file = __DIR__ . '/Bot.log';
 
     private static $s = array(
-        'o' => PHP_EOL,
         'e' => '',
         'p' => ' ',
         'd' => ' : ',
+        't' => '; ',
         's1' => '(',
         's2' => ')',
         'n' => 'NULL',
@@ -35,9 +38,10 @@ class Bot
         'i_t' =>
             self::TITLE . ' V' . self::VERSION . PHP_EOL .
             self::DESCRIPTION . PHP_EOL .
-            self::AUTHOR,
+            self::AUTHOR . PHP_EOL,
         'g_t' => 'Bot Launched!',
         'p_t' => 'Bot Disabled!',
+        'l_h' => 'Commands list: ',
         'e_h' => 'Error: ',
         'c_h' => 'Captcha: ',
         'm_h' => 'Method: ',
@@ -50,10 +54,7 @@ class Bot
     private $commands;
     private $log;
 
-    private $captcha_sid = '';
-    private $captcha_key = '';
-
-    public function __construct($vk_api_key, $ac_api_key = '')
+    public function __construct($vk_api_key, $ac_api_key = NULL)
     {
         $this->engine = true;
         if (is_file(self::$VK_class_file)) {
@@ -74,6 +75,7 @@ class Bot
                 die(self::$s['ac_e']);
             }
         }
+        $this->commands = array();
         $dir = scandir(self::$commands_dir);
         foreach ($dir as $value) {
             $path = self::$commands_dir . $value;
@@ -101,13 +103,26 @@ class Bot
                         return false;
                     }
 
+                    public function text()
+                    {
+                        $title = ($this->command_class)::TITLE;
+                        $description = ($this->command_class)::DESCRIPTION;
+                        if ($title !== NULL && $description !== NULL) {
+                            $return = array($title, $description);
+                        } else {
+                            $return = array();
+                        }
+                        return $return;
+                    }
+
                     public function exec($a)
                     {
                         return ($this->command_class)->main($a);
                     }
                 };
                 if ($command->status()) {
-                    $this->commands[str_replace(self::$s['pp'], self::$s['e'], $value)] = $command;
+                    $command_name = strtolower(str_replace(self::$s['pp'], self::$s['e'], $value));
+                    $this->commands[$command_name] = $command;
                 } else {
                     die(self::$s['c_e'] . $value);
                 }
@@ -135,8 +150,8 @@ class Bot
         if ($add_date) {
             $string = $this->Date() . self::$s['p'] . $string;
         }
-        $l1 = $in_file ? fwrite($this->log, $string . self::$s['o']) : true;
-        $l2 = print($string . self::$s['o']);
+        $l1 = $in_file ? fwrite($this->log, $string . PHP_EOL) : true;
+        $l2 = print($string . PHP_EOL);
         return ($l1 && $l2);
     }
 
@@ -153,32 +168,53 @@ class Bot
         $this->Logger($title . $body);
     }
 
-    public function Requester($method, $parameters = array())
+    public function Requester($method, $parameters = array(), $attempts_amount = 3)
     {
-        if (!empty($this->captcha_sid) && !empty($this->captcha_key)) {
-            $parameters['captcha_sid'] = $this->captcha_sid;
-            $parameters['captcha_key'] = $this->captcha_key;
-            $this->captcha_sid = $this->captcha_key = self::$s['e'];
-        }
-        $response = $this->vk->api($method, $parameters);
-        if (isset($response['response'])) {
-            $la_methods = array(
-                'messages.send',
-                'account.setOnline',
-                'account.setOffline'
-            );
-            if (array_search($method, $la_methods) !== false) {
-                $this->Logger_Template(self::$s['m_h'], true, $method, $response['response']);
+        $response = $captcha_data = array();
+        $flood_control = false;
+        for ($i = 0, $j = $attempts_amount; $i >= 0; $i--) {
+            if (!empty($captcha_data[0]) && !empty($captcha_data[1])) {
+                $parameters['captcha_sid'] = $captcha_data[0];
+                $parameters['captcha_key'] = $captcha_data[1];
+                $captcha_data = array();
             }
-        } elseif (isset($response['error'])) {
-            $this->Logger_Template(self::$s['e_h'], true, $response['error']['error_msg'], $method);
-            if (isset($response['error']['captcha_sid'])) {
-                $captcha_code = $this->Captcha_Decoder($response['error']['captcha_img']);
-                if (!empty($captcha_code)) {
-                    $this->captcha_sid = $response['error']['captcha_sid'];
-                    $this->captcha_key = $captcha_code;
+            if ($flood_control) {
+                $date = self::$s['p'] . self::$s['s1'] . $this->Date() . self::$s['s2'];
+                $parameters['message'] .= $date;
+                $flood_control = false;
+            }
+            $response = $this->vk->api($method, $parameters);
+            if (isset($response['response'])) {
+                $la_methods = array(
+                    'messages.send',
+                    'account.setOnline',
+                    'account.setOffline'
+                );
+                if (array_search($method, $la_methods) !== false) {
+                    $this->Logger_Template(self::$s['m_h'], true, $method, $response['response']);
+                }
+            } elseif (isset($response['error'])) {
+                $error_code = $response['error']['error_code'];
+                $error_msg = $response['error']['error_msg'];
+                $this->Logger_Template(self::$s['e_h'], true, $error_code, $error_msg, $method);
+                switch ($response['error']['error_code']) {
+                    case 14:
+                        $captcha_code = $this->Captcha_Decoder($response['error']['captcha_img']);
+                        if (!empty($captcha_code)) {
+                            $captcha_data[0] = $response['error']['captcha_sid'];
+                            $captcha_data[1] = $captcha_code;
+                        }
+                        break;
+                    case 9:
+                        $flood_control = true;
+                        break;
+                }
+                if ($j > 1) {
+                    $j--;
+                    $i++;
                 }
             }
+            sleep(self::SLEEP);
         }
         return $response;
     }
@@ -208,33 +244,47 @@ class Bot
         return $return;
     }
 
-    private function Command_Extractor($string, $deli = '#')
+    private function Command_Extractor($string)
     {
         $key = $value = self::$s['e'];
-        if (!empty($deli) && isset($string{0}) && $string{0} == $deli) {
+        if (!empty(self::C_SEPARATOR) && isset($string{0}) && $string{0} == self::C_SEPARATOR) {
             $parts = explode(self::$s['p'], $string, 2);
             $key = isset($parts[0]) ? substr($parts[0], 1) : self::$s['e'];
             $value = isset($parts[1]) ? $parts[1] : self::$s['e'];
         }
-        return array('key' => $key, 'value' => $value);
+        return array($key, $value);
     }
 
     private function Commands_Executor($command, $data = array())
     {
-        $value = !empty($command['value']) ? $command['value'] : self::$s['n'];
-        $this->Logger_Template(self::$s['k_h'], true, $command['key'], $value);
-        switch ($command['key']) {
+        $value = !empty($command[1]) ? $command[1] : self::$s['n'];
+        $this->Logger_Template(self::$s['k_h'], true, $command[0], $value);
+        switch ($command[0]) {
             case 'shutdown':
                 $this->engine = false;
                 $return = true;
                 break;
             case 'info':
-                $this->Message_Sender(self::$s['i_t'] . self::$s['o'] . $this->Date(), $data);
+                $this->Message_Sender(self::$s['i_t'], $data);
+                $return = true;
+                break;
+            case 'help':
+                $massage = self::$s['l_h'];
+                foreach ($this->commands as $key => $val) {
+                    $c_text = ($this->commands[$key])->text();
+                    if ($c_text != array()) {
+                        $about = self::$s['s1'] . $c_text[0] . self::$s['p'] . $c_text[1] . self::$s['s2'];
+                    } else {
+                        $about = self::$s['n'];
+                    }
+                    $massage .= self::C_SEPARATOR . $key . self::$s['p'] . $about . self::$s['t'];
+                }
+                $this->Message_Sender($massage, $data);
                 $return = true;
                 break;
             default:
-                if (array_key_exists($command['key'], $this->commands) !== false) {
-                    $command_answer = $this->commands[$command['key']]->exec(array($this, $data));
+                if (array_key_exists($command[0], $this->commands) !== false) {
+                    $command_answer = $this->commands[$command[0]]->exec(array($this, $command, $data));
                     $return = boolval($command_answer);
                 } else {
                     $return = false;
@@ -242,37 +292,38 @@ class Bot
                 break;
         }
         if (!$return) {
-            $this->Logger_Template(self::$s['e_h'], false, self::$s['k_h'], $command['key']);
+            $this->Logger_Template(self::$s['e_h'], false, self::$s['k_h'], $command[0]);
         }
         return $return;
     }
 
     public function run()
     {
-        $this->Logger(self::$s['o'] . self::$s['i_t'], false, false);
-        $this->Logger(self::$s['o'] . self::$s['g_t'] . self::$s['o'], false, true);
-        $sleep = 1;
-        $uo_time = 780 / $sleep;
-        for ($i = $uo_time, $rp_ms_id = 0; $this->engine; $i++) {
+        $this->Logger(self::$s['i_t'], false, false);
+        $this->Logger(self::$s['g_t'], false, true);
+        $this->Requester('account.setOnline', array(), 5);
+        $uo_time = 600 / self::SLEEP;
+        for ($i = 0, $rp_ms_id = 0; $this->engine; $i++) {
             if ($uo_time <= $i) {
-                $online = $this->Requester('account.setOnline');
-                if (isset($online['response']) && isset($online['response']) == 1) {
-                    $i = 0;
-                }
+                $this->Requester('account.setOnline', array(), 5);
+                $i = 0;
             }
-            $ms = $this->Requester('messages.get', array('count' => 1, 'time_offset' => $sleep + 1));
+            $ms = $this->Requester('messages.get', array(
+                'count' => 1,
+                'time_offset' => self::SLEEP + 1
+            ));
             if (isset($ms['response'][1]['mid']) && $rp_ms_id != $ms['response'][1]['mid']) {
                 $message_text = isset($ms['response'][1]['body']) ? $ms['response'][1]['body'] : self::$s['e'];
                 $command = $this->Command_Extractor($message_text);
-                if (!empty($command['key'])) {
-                    $command['key'] = strtolower($command['key']);
+                if (!empty($command[0])) {
+                    $command[0] = strtolower($command[0]);
                     $this->Commands_Executor($command, $ms);
                 }
                 $rp_ms_id = $ms['response'][1]['mid'];
             }
-            sleep($sleep);
+            sleep(self::SLEEP);
         }
-        $this->Requester('account.setOffline');
-        $this->Logger(self::$s['o'] . self::$s['p_t'] . self::$s['o'], false, true);
+        $this->Requester('account.setOffline', array(), 5);
+        $this->Logger(self::$s['p_t'], false, true);
     }
 }

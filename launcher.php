@@ -1,4 +1,3 @@
-#!/bin/bash
 <?php
 require_once 'Bot.class.php';
 $bot = new Bot(
