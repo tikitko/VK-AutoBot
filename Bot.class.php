@@ -1,7 +1,7 @@
 <?php
 
 /*
- *      AutoBot V0.7
+ *      AutoBot V0.7.1
  *      PHP Bot for Vk
  *      By Nikita Bykov
  *
@@ -12,7 +12,7 @@ class Bot
     const TITLE = 'AutoBot';
     const DESCRIPTION = 'PHP Bot for VK';
     const AUTHOR = 'Nikita Bykov';
-    const VERSION = '0.7';
+    const VERSION = '0.7.1';
 
     const SLEEP = 1;
     const C_SEPARATOR = '#';
@@ -214,7 +214,9 @@ class Bot
                     $i++;
                 }
             }
-            sleep(self::SLEEP);
+            if ($attempts_amount != $j) {
+                sleep(self::SLEEP);
+            }
         }
         return $response;
     }
